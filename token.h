@@ -1,52 +1,67 @@
 #ifndef __TOKEN_L__
 #define __TOKEN_L__
 
-typedef Yomu {
-	char *tag;
+typedef struct Yomu yomu_t;
 
-	int data_index, *max_data;
-	char *data; // for a singular type (like a char *)
+typedef struct Attr {
+	int (*set)(yomu_t *, char *, char *);
+	int (*get)(yomu_t *, char *);
+} attr_t;
 
-	int *max_attr_tag, attr_tag_index;
-	char **attribute; // holds any attributes for this tag
-	// the attribute name is always an even position and
-	// the attribute itself is odd
+typedef struct YomuFunctions {
+	// takes either a file ("file.html", etc.) or a string("<div>hello</div>")
+	// and creates a yomu representation
+	yomu_t *(*parse)(char *, char);
 
-	int children_data_pos; // where the children occur within the
-		// overall scheme of this token
-		// ** mainly for token_read_all_data() to ensure the data
-		// is read from the correct position
-	int *max_children, children_index;
-	struct Yomu **children; // for nest children tags
+	// finder functions:
+	// children takes in the current yomu level and a char * to search for matches
+	// the char * can be any of the following:
+	/*
+		-- tag: this would be represented by just writing the tag ("div", "h1", etc.)
+		-- id: access this by writing a "#" first ("#myid", etc.)
+		-- class: write a "." before the search term (".myclass", etc.)
 
-	struct Yomu *parent;
-} yomu_t;
+		if you start the char * with a "-" you can add some parameters like the following:
+		"-m": add a match function that takes in int (*)(yomu_t *)
+			-- returns 1 if it matches, and 0 if it does not
+		"-n": add a maximum number of return values:
+			-- add a single int parameter to the function call
 
-typedef struct YomuFunctions yomu;
+		an example of using all of the above with a id parameter would look like:
+		children(yomu, "-m-n#myid", children_len, int (*)(yomu_t *), int);
+	*/
+	// the int * parameter (called children_len in example above) will be filled
+	// with the length of the returned array when the function finishes running
+	// this will return an array of tokens that can be parsed
+	yomu_t **(*children)(yomu_t *, char *, int *);
+	// same as children function but recursively searches every sub path
+	yomu_t **(*find)(yomu_t *, char *, int *);
 
-yomu_t *yomu(char reader_type, char *filename);
+	yomu_t *(*first)(yomu_t *, char *);
+	yomu_t *(*last)(yomu_t *, char *);
 
-int token_has_classname(token_t *token, char *classname);
+	// returns the parent of the given yomu
+	yomu_t *(*parent)(yomu_t *);
 
-char *token_attr(token_t *token, char *attrname);
+	attr_t attr; // see above for attr_t
+	// has class searches the inputted token for a class name that matches
+	// the inputted char *
+	int (*hasClass)(yomu_t *, char *);
 
-token_t **token_children(token_t *parent);
-token_t *grab_token_parent(token_t *curr_token);
+	// updates the data within the yomu_t value
+	// this will disconnect the lower data points unless
+	// "%s" is used within the inputted char *, which will then find
+	// occurrences of children that will stay within the yomu children structure
+	int (*update)(yomu_t *, char *);
 
-token_t *grab_token_by_tag(token_t *start_token, char *tag_name);
-token_t *grab_token_by_tag_maxsearch(token_t *start_token, char *tag_name, int max_search);
-token_t *grab_token_by_tag_matchparam(token_t *start_token, char *tag_name, int (*match)(token_t *));
-token_t *grab_token_by_tag_matchparam_maxsearch(token_t *start_token, char *tag_name, int (*match)(token_t *), int max_search);
-token_t **grab_tokens_by_tag(token_t *start_token, char *tags_name, int *spec_token_max);
+	// takes in a yomu and reads the data within -- the char decides if the read
+	// will also search children or just shallowly read
+	char *(*read)(yomu_t *, char);
 
-token_t *grab_token_by_classname(token_t *search_token, char *classname);
+	// recursively destroys all allocated data within a yomu
+	int (*destroy)(yomu_t *);
+} yomu_f;
 
-char **token_get_tag_data(token_t *search_token, char *tag_name, int *max_tag);
-char *token_read_all_data(token_t *search_token, int *data_max, void *block_tag, void *(*is_blocked)(void *, char *));
-
-char *data_at_token(token_t *curr_token);
-int update_token_data(token_t *curr_token, char *new_data, int *new_data_len);
-
-int destroy_token(token_t *curr_token);
+yomu_f *yomu;
 
 #endif

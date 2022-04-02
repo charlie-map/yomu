@@ -15,50 +15,26 @@ void *resize_array(void *array, int *max_size, int current_index, size_t singlet
 	return array;
 }
 
-typedef struct Attr {
-	int (*set)(yomu_t *, char *, char *);
-	int (*get)(yomu_t *, char *);
-} attr_t;
+Yomu {
+	char *tag;
 
-struct YomuFunctions {
-	// takes either a file ("file.html", etc.) or a string("<div>hello</div>")
-	// and creates a yomu representation
-	yomu_t *(*parse)(char *);
+	int data_index, *max_data;
+	char *data; // for a singular type (like a char *)
 
-	// finder functions:
-	// children takes in the current yomu level and a char * to search for matches
-	// the char * can be any of the following:
-	/*
-		-- tag: this would be represented by just writing the tag ("div", "h1", etc.)
-		-- id: access this by writing a "#" first ("#myid", etc.)
-		-- class: write a "." before the search term (".myclass", etc.)
+	int *max_attr_tag, attr_tag_index;
+	char **attribute; // holds any attributes for this tag
+	// the attribute name is always an even position and
+	// the attribute itself is odd
 
-		if you start the char * with a "-" you can add some parameters like the following:
-		"-m": add a match function that takes in int (*)(yomu_t *)
-			-- returns 1 if it matches, and 0 if it does not
-		"-n": add a maximum number of return values:
-			-- add a single int parameter to the function call
+	int children_data_pos; // where the children occur within the
+		// overall scheme of this token
+		// ** mainly for token_read_all_data() to ensure the data
+		// is read from the correct position
+	int *max_children, children_index;
+	struct Yomu **children; // for nest children tags
 
-		an example of using all of the above with a id parameter would look like:
-		children(yomu, "-m-n#myid", children_len, int (*)(yomu_t *), int);
-	*/
-	// the int * parameter (called children_len in example above) will be filled
-	// with the length of the returned array when the function finished running
-	// this will return an array of tokens that can be parsed
-	yomu_t **(*children)(yomu_t *, char *, int *);
-	// same as children function but recursively searches every sub path
-	yomu_t **(*find)(yomu_t *, char *, int *);
-
-	// returns the parent of the given yomu
-	yomu_t *(*parent)(yomu_t *);
-
-	attr_t attr;
-
-	
-
-	// recursively destroys all allocated data within a yomu
-	int (*destroy)(yomu_t *);
-};
+	struct Yomu *parent;
+} 
 
 token_t *create_token(char *tag, token_t *parent) {
 	token_t *new_token = malloc(sizeof(token_t));
@@ -162,47 +138,40 @@ char *data_at_token(token_t *curr_token) {
 	return curr_token->data;
 }
 
-token_t *grab_token_by_tag_helper(token_t *start_token, char *tag_name, int (*is_match)(token_t *), int max_search) {
-	// search for first occurence of token with tag name == tag_name
-	// if it doesn't exists, return NULL
+token_t **grab_tokens_by_match_helper(token_t *start_token, int (*is_match)(token_t *, char *), char *search, token_t **curr_found_tokens, int *found_token_length, int index_found_token, int recur) {
 	for (int check_children = 0; check_children < start_token->children_index && (!max_search || check_children < max_search); check_children++) {
-		// compare tag:
-		if (strcmp(start_token->children[check_children]->tag, tag_name) == 0 && is_match(start_token->children[check_children]))
-			return start_token->children[check_children];
+		// compare:
+		if (is_match(start_token->children[check_children], search)) {
+			curr_found_tokens[index_found_token] = start_token->children[check_children];
+			index_found_token++;
+
+			curr_found_tokens = resize_array(curr_found_tokens, found_token_length, index_found_token, sizeof(token_t *));
+		}
 	}
 
 	// otherwise check children
-	for (int bfs_children = 0; bfs_children < start_token->children_index; bfs_children++) {
-		token_t *check_children_token = grab_token_by_tag_helper(start_token->children[bfs_children], tag_name, is_match, max_search);
-
-		if (check_children_token)
-			return check_children_token;
+	for (int bfs_children = 0; bfs_children < recur ? start_token->children_index : 0; bfs_children++) {
+		curr_found_tokens = grab_token_by_tag_helper(start_token->children[bfs_children], is_match, search, curr_found_tokens, found_token_length, index_found_token, recur);
 	}
 
-	return NULL;
+	return curr_found_tokens;
 }
 
-int matcher_true(token_t *token) {
-	return 1;
+token_t **grab_shallow_tokens_by_match(token_t *start_token, int (*match)(token_t *, char *), char *search, int *length) {
+	*length = 8;
+	token_t **tokens = malloc(sizeof(token_t *) * *length);
+
+	tokens = grab_tokens_by_match_helper(start_token, match, search, tokens, length, 0, 0);
+	return tokens;
 }
 
-token_t *grab_token_by_tag(token_t *start_token, char *tag_name) {
-	return grab_token_by_tag_helper(start_token, tag_name, matcher_true, 0);
+token_t **grab_deep_tokens_by_match(token_t *start_token, int (*match)(token_t *, char *), char *search, int *length) {
+	*length = 8;
+	token_t **tokens = malloc(sizeof(token_t *) * *length);
+
+	tokens = grab_tokens_by_match_helper(start_token, match, search, tokens, length, 0, 1);
+	return tokens;
 }
-
-token_t *grab_token_by_tag_maxsearch(token_t *start_token, char *tag_name, int max_search) {
-	return grab_token_by_tag_helper(start_token, tag_name, matcher_true, max_search);
-}
-
-token_t *grab_token_by_tag_matchparam(token_t *start_token, char *tag_name, int (*match)(token_t *)) {
-	return grab_token_by_tag_helper(start_token, tag_name, match, 0);
-}
-
-token_t *grab_token_by_tag_matchparam_maxsearch(token_t *start_token, char *tag_name, int (*match)(token_t *), int max_search) {
-	return grab_token_by_tag_helper(start_token, tag_name, match, max_search);
-}
-
-
 
 int grab_tokens_by_tag_helper(token_t **specific_token_builder, int *spec_token_max, int spec_token_index, token_t *start_token, char *tag_name) {
 	// check current tokens children:
@@ -735,7 +704,7 @@ int tokenizeMETA(FILE *file, char *str_read, token_t *curr_tree) {
 	'f' for file reading
 	's' for char * reading
 */
-token_t *tokenize(char reader_type, char *filename) {
+token_t *tokenize(char *filename, char reader_type) {
 	FILE *file = NULL;
 
 	if (reader_type == 'f')
@@ -752,3 +721,59 @@ token_t *tokenize(char reader_type, char *filename) {
 
 	return curr_tree;
 }
+
+int id_match(yomu_t *y, char *id) {
+	return has_attr_value(y->attribute, y->attr_tag_index, "id", id);
+}
+
+int class_match(yomu_t *y, char *class) {
+	return has_attr_value(y->attribute, y->attr_tag_index, "class", class);
+}
+
+int tag_match(yomu_t *y, char *tag) {
+	return strcmp(y->tag, tag) == 0;
+}
+
+/* this will search through the char *match_param to compute all of the that are required
+	for example:
+
+		".classname h1"
+
+	will return an array of boolean functions:
+
+	[
+		class_match,
+		tag_match
+	]
+
+	so then when running compute_matches, first get the results with the first found match,
+	then using the first results, find the sub results of each result and so on and so forth
+*/
+int (*create_matches)(char *match_param, int *match_param_length) {
+
+}
+
+yomu_t **compute_match_shallow(yomu_t *y, char *match_param, int *length) {
+
+
+	grab_shallow_tokens_by_match
+}
+
+yomu_t **compute_match_deep(yomu_t *y, char *match_param, int *length) {
+
+
+	grab_deep_tokens_by_match
+}
+
+yomu_t *grab_token_by_match(yomu_t *y, char *match_param) {
+
+}
+
+yomu = {
+	.parse = tokenize,
+
+	.children = 
+	.find = 
+	.first = 
+	.last = 
+};
