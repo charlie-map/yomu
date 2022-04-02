@@ -5,6 +5,9 @@
 #include "token.h"
 #include "../utils/helper.h"
 
+int is_range(char c);
+char **split_string(char *full_string, char delimeter, int *arr_len, char *extra, ...);
+
 void *resize_array(void *array, int *max_size, int current_index, size_t singleton_size) {
 	while (current_index >= *max_size) {
 		*max_size *= 2;
@@ -157,19 +160,11 @@ token_t **grab_tokens_by_match_helper(token_t *start_token, int (*is_match)(toke
 	return curr_found_tokens;
 }
 
-token_t **grab_shallow_tokens_by_match(token_t *start_token, int (*match)(token_t *, char *), char *search, int *length) {
+token_t **grab_tokens_by_match(token_t *start_token, int (*match)(token_t *, char *), char *search, int *length, int depth) {
 	*length = 8;
 	token_t **tokens = malloc(sizeof(token_t *) * *length);
 
-	tokens = grab_tokens_by_match_helper(start_token, match, search, tokens, length, 0, 0);
-	return tokens;
-}
-
-token_t **grab_deep_tokens_by_match(token_t *start_token, int (*match)(token_t *, char *), char *search, int *length) {
-	*length = 8;
-	token_t **tokens = malloc(sizeof(token_t *) * *length);
-
-	tokens = grab_tokens_by_match_helper(start_token, match, search, tokens, length, 0, 1);
+	tokens = grab_tokens_by_match_helper(start_token, match, search, tokens, length, 0, depth);
 	return tokens;
 }
 
@@ -727,11 +722,55 @@ int id_match(yomu_t *y, char *id) {
 }
 
 int class_match(yomu_t *y, char *class) {
-	return has_attr_value(y->attribute, y->attr_tag_index, "class", class);
+	int class_index;
+	for (class_index = 0; class_index < y->attr_tag_index; class_index += 2) {
+		if (strcmp(y->attribute[class_index], "class") == 0)
+			break;
+	}
+
+	if (class_index == y->attr_tag_index) // no class attribute
+		return 0;
+
+	// separate all class options
+	int *class_list_len = malloc(sizeof(int)), *yomu_class_len = malloc(sizeof(int));
+	char **class_list = split_string(class, '.', class_list_len, "-r-c", is_range);
+	char **yomu_class = split_string(y->attribute[class_index + 1], ' ', yomu_class_len, "-r-c", is_range);
+
+	// make sure each class in class_list occurs in yomu_class
+	for (int check_class_list_match = 0; check_class_list_match < *class_list_len; check_class_list_match++) {
+
+		int find_yomu_class;
+		for (find_yomu_class = 0; find_yomu_class < *yomu_class_len; find_yomu_class++) {
+			if (strcmp(class_list[check_class_list_match], yomu_class[find_yomu_class]) == 0)
+				break;
+		}
+
+		// if find_yomu_class == *yomu_class_len, that means there was not an occurrence of
+		// the class_list class, so this should return false
+		if (find_yomu_class == *yomu_class_len)
+			return 0;	
+	}
+
+	// otherwise
+	return 1;
 }
 
 int tag_match(yomu_t *y, char *tag) {
 	return strcmp(y->tag, tag) == 0;
+}
+
+typedef struct Match {
+	char *match_tag; // used as input to the following function
+	int (*match)(yomu_t *, char *);
+} match_t;
+
+match_t match_create(int (*match)(yomu_t *, char *), char *match_tag) {
+	match_t new_match = {
+		.match = match,
+		.match_tag = match_tag
+	};
+
+	return new_match;
 }
 
 /* this will search through the char *match_param to compute all of the that are required
@@ -739,33 +778,92 @@ int tag_match(yomu_t *y, char *tag) {
 
 		".classname h1"
 
-	will return an array of boolean functions:
+	will return an array of match_t's:
 
 	[
 		class_match,
-		tag_match
+		tag_match,
+		etc.
 	]
 
 	so then when running compute_matches, first get the results with the first found match,
 	then using the first results, find the sub results of each result and so on and so forth
 */
-int (*create_matches)(char *match_param, int *match_param_length) {
+match_t *create_matches(char *match_param, int *match_param_length) {
+	int *sub_match_param_length = malloc(sizeof(int));
+	char **sub_match_params = split_string(match_param, ' ', sub_match_param_length, "-r-c", is_range);
 
+	*match_param_length = *sub_match_param_length;
+	match_t *return_matches = malloc(sizeof(match_t) * *match_param_length);
+
+	// search through sub_match_params to see which function is needed
+	for (int find_match = 0; find_match < *match_param_length; find_match++) {
+		// check first value in the char * to decide which type we are searching for:
+		if (sub_match_params[find_match][0] == '.') // class
+			return_matches[find_match] = match_create(class_match, sub_match_params[find_match]);
+		else if (sub_match_params[find_match][0] == '#') // id
+			return_matches[find_match] = match_create(id_match, sub_match_params[find_match]);
+		else // tag
+			return_matches[find_match] = match_create(tag_match, sub_match_params[find_match]);
+	}
+
+	return return_matches;
+}
+
+yomu_t **compute_matches(yomu_t *y, char *match_param, int *length, int depth) {
+	int *match_param_length = malloc(sizeof(int));
+	// compute matches
+	match_t *matches = create_matches(match_param, match_param_length);
+
+	if (*match_param_length == 0) // no matches?
+		return NULL;
+
+	// for each match:
+	int *yomu_len = malloc(sizeof(int)), *yomu_prev_len = malloc(sizeof(int)), *yomu_buffer_len = malloc(sizeof(int));
+	yomu_t **yomu_match, **yomu_prev = NULL, **yomu_buffer;
+	yomu_match = grab_tokens_by_match(y, matches[0]->match, matches[0]->match_tag, yomu_len, depth);
+	for (int find_match = 1; find_match < *match_param_length; find_match++) {
+		if (yomu_prev)
+			free(yomu_prev);
+		*yomu_prev_len = *yomu_len;
+		yomu_prev = yomu_match;
+
+		// setup up a reader for each token in yomu_prev
+		*yomu_len = 0;
+		for (int read_prev = 0; read_prev < *yomu_prev_len; read_prev++) {
+			yomu_buffer = grab_tokens_by_match(yomu_prev[read_prev], matches[find_match]->match, matches[find_match]->match_tag, yomu_buffer_len, depth);
+			free(matches[find_match]->match_tag);
+
+			for (int copy_buffer_to_match = 0; copy_buffer_to_match < *yomu_buffer_len; copy_buffer_to_match++) {
+				yomu_match[*yomu_len] = yomu_buffer[copy_buffer_to_match];
+				*yomu_len++;
+			}
+		}
+	}
+
+	// copy yomu_len in length
+	*length = *yomu_len;
+
+	// free all allocations
+	free(match_param_length);
+	free(matches);
+
+	free(yomu_len);
+	free(yomu_prev_len);
+	free(yomu_buffer_len);
+
+	return yomu_match;
 }
 
 yomu_t **compute_match_shallow(yomu_t *y, char *match_param, int *length) {
-
-
-	grab_shallow_tokens_by_match
+	return compute_matches(y, match_param, length, 0);
 }
 
 yomu_t **compute_match_deep(yomu_t *y, char *match_param, int *length) {
-
-
-	grab_deep_tokens_by_match
+	return compute_matches(y, match_param, length, 1);
 }
 
-yomu_t *grab_token_by_match(yomu_t *y, char *match_param) {
+yomu_t *grab_token_by_match(yomu_t *y, char *match_param, int start_pos) {
 
 }
 
@@ -777,3 +875,106 @@ yomu = {
 	.first = 
 	.last = 
 };
+
+/* HELPER FUNCTIONS */
+int is_range(char c) {
+	return 1;
+}
+
+char **split_string(char *full_string, char delimeter, int *arr_len, char *extra, ...) {
+	va_list param;
+	va_start(param, extra);
+
+	int **minor_length = NULL;
+	int (*is_delim)(char, char *) = NULL;
+	char *multi_delims = NULL;
+
+	int (*is_range)(char _char) = char_is_range;
+
+	int should_lowercase = 1;
+
+	for (int check_extra = 0; extra[check_extra]; check_extra++) {
+		if (extra[check_extra] != '-')
+			continue;
+
+		if (extra[check_extra + 1] == 'l')
+			minor_length = va_arg(param, int **);
+		else if (extra[check_extra + 1] == 'd') {
+			is_delim = va_arg(param, int (*)(char, char *));
+			multi_delims = va_arg(param, char *);
+		} else if (extra[check_extra + 1] == 'r') {
+			is_range = va_arg(param, int (*)(char));
+		} else if (extra[check_extra + 1] == 'c')
+			should_lowercase = 0;
+	}
+
+	int arr_index = 0;
+	*arr_len = 8;
+	char **arr = malloc(sizeof(char *) * *arr_len);
+
+	if (minor_length)
+		*minor_length = realloc(*minor_length, sizeof(int) * *arr_len);
+
+	int *max_curr_sub_word = malloc(sizeof(int)), curr_sub_word_index = 0;
+	*max_curr_sub_word = 8;
+	arr[arr_index] = malloc(sizeof(char) * *max_curr_sub_word);
+	arr[arr_index][0] = '\0';
+
+	for (int read_string = 0; full_string[read_string]; read_string++) {
+		if ((is_delim && is_delim(full_string[read_string], multi_delims)) || full_string[read_string] == delimeter) { // next phrase
+			// check that current word has some length
+			if (arr[arr_index][0] == '\0')
+				continue;
+
+			// quickly copy curr_sub_word_index into minor_length if minor_length is defined:
+			if (minor_length) {
+				(*minor_length)[arr_index] = curr_sub_word_index;
+			}
+
+			arr_index++;
+
+			while (arr_index >= *arr_len) {
+				*arr_len *= 2;
+				arr = realloc(arr, sizeof(char *) * *arr_len);
+
+				if (minor_length)
+					*minor_length = realloc(*minor_length, sizeof(int *) * *arr_len);
+			}
+
+			curr_sub_word_index = 0;
+			*max_curr_sub_word = 8;
+			arr[arr_index] = malloc(sizeof(char) * *max_curr_sub_word);
+			arr[arr_index][0] = '\0';
+
+			continue;
+		}
+
+		// if not in range, skip:
+		if (is_range && !is_range(full_string[read_string]))
+			continue;
+
+		// if a capital letter, lowercase
+		if (should_lowercase && (int) full_string[read_string] <= 90 && (int) full_string[read_string] >= 65)
+			full_string[read_string] = (char) ((int) full_string[read_string] + 32);
+
+		arr[arr_index][curr_sub_word_index] = full_string[read_string];
+		curr_sub_word_index++;
+
+		arr[arr_index] = resize_array(arr[arr_index], max_curr_sub_word, curr_sub_word_index, sizeof(char));
+
+		arr[arr_index][curr_sub_word_index] = '\0';
+	}
+
+	if (arr[arr_index][0] == '\0') { // free position
+		free(arr[arr_index]);
+
+		arr_index--;
+	} else if (minor_length)
+			(*minor_length)[arr_index] = curr_sub_word_index;
+
+	*arr_len = arr_index + 1;
+
+	free(max_curr_sub_word);
+
+	return arr;
+}
