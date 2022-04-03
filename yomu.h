@@ -1,11 +1,11 @@
-#ifndef __TOKEN_L__
-#define __TOKEN_L__
+#ifndef __YOMU_L__
+#define __YOMU_L__
 
 typedef struct Yomu yomu_t;
 
 typedef struct Attr {
 	int (*set)(yomu_t *, char *, char *);
-	int (*get)(yomu_t *, char *);
+	char *(*get)(yomu_t *, char *);
 } attr_t;
 
 typedef struct YomuFunctions {
@@ -62,6 +62,6 @@ typedef struct YomuFunctions {
 	int (*destroy)(yomu_t *);
 } yomu_f;
 
-yomu_f *yomu;
+extern yomu_f yomu;
 
-#endif
+#endif /* __YOMU_L__ */
