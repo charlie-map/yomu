@@ -711,16 +711,24 @@ int tokenizeMETA(FILE *file, char *str_read, yomu_t *curr_tree) {
 	return 0;
 }
 
-/*
-	reader_type chooses what kind of reading is to be done:
-	'f' for file reading
-	's' for char * reading
-*/
-yomu_t *tokenize(char *filename, char reader_type) {
-	FILE *file = NULL;
+// see comment on tokenize for ruleset
+// 1 for file
+// 0 for html
+int file_or_html_name(char *data) {
+	for (int check_name = 0; data[check_name]; check_name++) {
+		if (data[check_name] == '<' || data[check_name] == '>')
+			return 1;
+	}
 
-	if (reader_type == 'f')
-		file = fopen(filename, "r");
+	return 0;
+}
+/*
+	tokenize takes in either a filename or a char * filled with the <HTML> data
+	search for a "<" or ">" in the filename since if the filename contains one
+	of those, it is thereby an illegal filename (https://www.mtu.edu/umc/services/websites/writing/characters-avoid/)
+*/
+yomu_t *tokenize(char *filename) {
+	FILE *file = file_or_html_name(filename) ? fopen(filename, "r") : NULL;
 
 	char *root_tag = malloc(sizeof(char) * 5);
 	strcpy(root_tag, "root");

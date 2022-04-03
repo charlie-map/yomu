@@ -11,7 +11,7 @@ typedef struct Attr {
 typedef struct YomuFunctions {
 	// takes either a file ("file.html", etc.) or a string("<div>hello</div>")
 	// and creates a yomu representation
-	yomu_t *(*parse)(char *, char);
+	yomu_t *(*parse)(char *);
 
 	// finder functions:
 	// children takes in the current yomu level and a char * to search for matches
