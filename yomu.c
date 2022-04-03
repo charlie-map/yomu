@@ -328,7 +328,12 @@ char *token_read_all_data(yomu_t *search_token, int *data_max, void *block_tag, 
 }
 
 char *read_token(yomu_t *search_token, char read_type) {
-	return "";
+	int *data_len = malloc(sizeof(int));
+	char *data = token_read_all_data(search_token, data_len, NULL, NULL, read_type == 'd' ? 1 : 0);
+
+	free(data_len);
+
+	return data;
 }
 
 int update_token(yomu_t *search_token, char *data) {
@@ -521,7 +526,7 @@ tag_reader find_end_comment(FILE *file, char *str_read, char **curr_line, size_t
 		search_token++;
 	}
 
-	tag_read.new_search_token = search_token + 2;
+	tag_read.new_search_token = search_token + 3;
 	tag_read.update_str_read = str_read;
 
 	return tag_read;
@@ -702,6 +707,8 @@ int tokenizeMETA(FILE *file, char *str_read, yomu_t *curr_tree) {
 
 			search_token++;
 		}
+
+		add_token_rolling_data(curr_tree, '\n');
 	}
 
 	free(buffer_size);
@@ -728,7 +735,14 @@ int file_or_html_name(char *data) {
 	of those, it is thereby an illegal filename (https://www.mtu.edu/umc/services/websites/writing/characters-avoid/)
 */
 yomu_t *tokenize(char *filename) {
-	FILE *file = file_or_html_name(filename) ? fopen(filename, "r") : NULL;
+	int make_file = !file_or_html_name(filename);
+
+	FILE *file = make_file ? fopen(filename, "r") : NULL;
+
+	if (make_file && !file) {
+		printf("Uh oh! Something was wrong with the file: %s\n", filename);
+		exit(1);
+	}
 
 	char *root_tag = malloc(sizeof(char) * 5);
 	strcpy(root_tag, "root");
@@ -923,7 +937,7 @@ yomu_t *grab_last_token_by_match(yomu_t *y, char *match_param) {
 	return compute_match(y, match_param, 1);
 }
 
-yomu_f yomu = (yomu_f){
+yomu_func_t yomu_f = (yomu_func_t){
 	.parse = tokenize,
 
 	.children = compute_match_shallow,

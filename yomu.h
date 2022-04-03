@@ -55,13 +55,15 @@ typedef struct YomuFunctions {
 	int (*update)(yomu_t *, char *);
 
 	// takes in a yomu and reads the data within -- the char decides if the read
-	// will also search children or just shallowly read
+	// will also search children or just shallowly read:
+	// 'd' makes yomu search the entire sub tree
+	// 's' means only shallow copying
 	char *(*read)(yomu_t *, char);
 
 	// recursively destroys all allocated data within a yomu
 	int (*destroy)(yomu_t *);
-} yomu_f;
+} yomu_func_t;
 
-extern yomu_f yomu;
+extern yomu_func_t yomu_f;
 
 #endif /* __YOMU_L__ */
