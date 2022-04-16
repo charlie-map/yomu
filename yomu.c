@@ -19,6 +19,12 @@ void *resize_array(void *array, int *max_size, int current_index, size_t singlet
 	return array;
 }
 
+typedef struct Match {
+	char *match_tag; // used as input to the following function
+	int (*match)(yomu_t *, char *);
+} match_t;
+match_t *create_matches(char *match_param, int *match_param_length);
+
 struct Yomu {
 	int deep_copy;
 	char *tag;
@@ -359,20 +365,39 @@ char *resize_full_data(char *full_data, int *data_max, int data_index) {
 	return full_data;
 }
 
-int token_read_all_data_helper(yomu_t *search_token, char **full_data, int *data_max, int data_index, void *block_tag, void *(*is_blocked)(void *, char *), int currently_blocked, int recur) {
+int read_data_match(match_t *match, int *match_len, yomu_t *yomu) {
+	if (!match)
+		return 1;
+
+	// look at each match param:
+	for (int m = 0; m < *match_len; m++) {
+		if (!match[m].match(yomu, match[m].match_tag))
+			return 0;
+	}
+
+	return 1;
+}
+
+int token_read_all_data_helper(yomu_t *search_token, char **full_data, int *data_max, int data_index, match_t *match, int *match_len, int recur) {
 	// update reads specifically for %s's first to place sub tabs into the correct places
 	int add_from_child = 0;
 	
 	for (int read_token_data = 0; read_token_data < search_token->data_index; read_token_data++) {
 		if (search_token->data[read_token_data] == '<' && (read_token_data < search_token->data_index - 1 &&
 			search_token->data[read_token_data + 1] == '>')) {
+			if (!read_data_match(match, match_len, search_token->children[add_from_child])) {
+				add_from_child++;
+				read_token_data++;
+				continue;
+			}
+
 			if ((search_token->deep_copy + recur == 0) || recur) {
 				// make sure the next element can be search:
 				while (yomu_f.close_forbidden(yomu_f.forbidden_close_tags, search_token->children[add_from_child]->tag))
 					add_from_child++;
 
-				data_index = token_read_all_data_helper(search_token->children[add_from_child], full_data, data_max, data_index, block_tag, is_blocked,
-					block_tag && is_blocked(block_tag, search_token->children[add_from_child]->tag), recur);
+				data_index = token_read_all_data_helper(search_token->children[add_from_child],
+					full_data, data_max, data_index, match, match_len, recur);
 
 				// move to next child
 				add_from_child++;
@@ -382,10 +407,6 @@ int token_read_all_data_helper(yomu_t *search_token, char **full_data, int *data
 			read_token_data++;
 			continue;
 		}
-
-		// skip if the tag is blocked
-		if (currently_blocked)
-			continue;
 
 		// check full_data has enough space
 		*full_data = resize_full_data(*full_data, data_max, data_index + 1);
@@ -399,13 +420,13 @@ int token_read_all_data_helper(yomu_t *search_token, char **full_data, int *data
 }
 
 // go through the entire sub tree and create a char * of all data values
-char *token_read_all_data(yomu_t *search_token, int *data_max, void *block_tag, void *(*is_blocked)(void *, char *), int recur) {
+char *token_read_all_data(yomu_t *search_token, int *data_max, match_t *match, int *match_len, int recur) {
 	int data_index = 0;
 	*data_max = 8;
 	char **full_data = malloc(sizeof(char *));
 	*full_data = malloc(sizeof(char) * *data_max);
 
-	data_index = token_read_all_data_helper(search_token, full_data, data_max, 0, block_tag, is_blocked, 0, recur);
+	data_index = token_read_all_data_helper(search_token, full_data, data_max, 0, match, match_len, recur);
 
 	(*full_data)[data_index] = 0;
 
@@ -416,11 +437,33 @@ char *token_read_all_data(yomu_t *search_token, int *data_max, void *block_tag, 
 	return pull_data;
 }
 
-char *read_token(yomu_t *search_token, char deep_read) {
+char *read_token(yomu_t *search_token, char *option, ...) {
+	int deep_read = 1;
+
+	va_list opt_list;
+	va_start(opt_list, option);
+
+	int *match_len = malloc(sizeof(int));
+	match_t *match = NULL;
+
+	for (int o = 0; option[o]; o++) {
+		if (option[o] != '-')
+			continue;
+
+		if (option[o + 1] == 's')
+			deep_read = 0;
+		else if (option[o + 1] == 'm')
+			match = create_matches(va_arg(opt_list, char *), match_len);
+	}
+
 	int *data_len = malloc(sizeof(int));
-	char *data = token_read_all_data(search_token, data_len, NULL, NULL, deep_read == 'd' ? 1 : 0);
+	char *data = token_read_all_data(search_token, data_len, match, match_len, deep_read);
 
 	free(data_len);
+
+	free(match_len);
+	if (match)
+		free(match);
 
 	return data;
 }
@@ -983,11 +1026,6 @@ int anti_tag_match(yomu_t *y, char *tag) {
 	return !(strcmp(y->tag, tag + sizeof(char)) == 0);
 }
 
-typedef struct Match {
-	char *match_tag; // used as input to the following function
-	int (*match)(yomu_t *, char *);
-} match_t;
-
 match_t match_create(int (*match)(yomu_t *, char *), char *match_tag) {
 	match_t new_match = {
 		.match = match,
@@ -1076,7 +1114,8 @@ yomu_t **compute_matches(yomu_t *y, char *match_param, int *length, int depth) {
 	}
 
 	// copy yomu_len in length
-	*length = *yomu_len;
+	if (length)
+		*length = *yomu_len;
 
 	// free all allocations
 	free(match_param_length);

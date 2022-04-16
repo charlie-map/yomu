@@ -65,11 +65,17 @@ typedef struct YomuFunctions {
 	// occurrences of children that will stay within the yomu children structure
 	int (*update)(yomu_t *, char *);
 
-	// takes in a yomu and reads the data within -- the char decides if the read
+	// takes in a yomu and reads the data within -- the char *decides if the read
 	// will also search children or just shallowly read:
-	// d -- makes yomu search the entire sub tree
-	// s -- means only shallow copying
-	char *(*read)(yomu_t *, char);
+	// -d -- makes yomu search the entire sub tree
+	// -s -- means only shallow copying
+	// ----- DEFAULTs to deep read if no parameter is given
+
+	// also can add some more optional parameters:
+	// -m -- allows for a match param add on that uses
+	// 		the same pattern as .children() and .find()
+	// 		where each match param is separated by a space
+	char *(*read)(yomu_t *, char *, ...);
 
 	// recursively destroys all allocated data within a yomu
 	int (*destroy)(yomu_t *);

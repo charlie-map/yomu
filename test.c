@@ -14,7 +14,7 @@ int test_file(char *filename) {
 	free(div_len);
 
 	printf("read -- ");
-	char *yomu_data = yomu_f.read(div_merge, 'd');
+	char *yomu_data = yomu_f.read(yomu, "-d-m", "!a !style");
 	printf("yomu: %s\n", yomu_data);
 
 	free(yomu_data);
