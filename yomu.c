@@ -6,6 +6,7 @@
 #include "yomu.h"
 
 int is_range(char c);
+int delimeter_check(char curr_char, char *delims);
 char **split_string(char *full_string, char delimeter, int *arr_len, char *extra, ...);
 
 void *resize_array(void *array, int *max_size, int current_index, size_t singleton_size) {
@@ -19,6 +20,7 @@ void *resize_array(void *array, int *max_size, int current_index, size_t singlet
 }
 
 struct Yomu {
+	int deep_copy;
 	char *tag;
 
 	int data_index, *max_data;
@@ -39,10 +41,12 @@ struct Yomu {
 	struct Yomu *parent;
 };
 
-yomu_t *create_token(char *tag, yomu_t *parent) {
+yomu_t *create_token(char *tag, yomu_t *parent, int deep_copy) {
 	yomu_t *new_token = malloc(sizeof(yomu_t));
 
+	new_token->deep_copy = deep_copy;
 	new_token->tag = tag;
+
 	new_token->data = malloc(sizeof(char) * 8);
 	memset(new_token->data, '\0', sizeof(char) * 8);
 	new_token->max_data = malloc(sizeof(int));
@@ -182,7 +186,7 @@ char *token_attr(yomu_t *token, char *attr) {
 			return token->attribute[read_attr + 1];
 	}
 
-	return NULL;
+	return "";
 }
 
 int set_attr(yomu_t *y, char *attr, char *new_val) {
@@ -243,30 +247,30 @@ char *data_at_token(yomu_t *curr_token) {
 	return curr_token->data;
 }
 
-yomu_t **grab_tokens_by_match_helper(yomu_t *start_token, int (*is_match)(yomu_t *, char *), char *search, yomu_t **curr_found_tokens, int *found_token_length, int index_found_token, int recur) {
+int grab_tokens_by_match_helper(yomu_t ***curr_found_tokens, yomu_t *start_token, int (*is_match)(yomu_t *, char *), char *search, int *found_token_length, int index_found_token, int recur) {
 	for (int check_children = 0; check_children < start_token->children_index; check_children++) {
 		// compare:
 		if (is_match(start_token->children[check_children], search)) {
-			curr_found_tokens[index_found_token] = start_token->children[check_children];
+			(*curr_found_tokens)[index_found_token] = start_token->children[check_children];
 			index_found_token++;
 
-			curr_found_tokens = resize_array(curr_found_tokens, found_token_length, index_found_token, sizeof(yomu_t *));
+			*curr_found_tokens = resize_array(*curr_found_tokens, found_token_length, index_found_token, sizeof(yomu_t *));
+			
+			// search children
+			if (recur)
+				index_found_token = grab_tokens_by_match_helper(curr_found_tokens, start_token->children[check_children], is_match, search, found_token_length, index_found_token, recur);
 		}
 	}
 
-	// otherwise check children
-	for (int bfs_children = 0; bfs_children < recur ? start_token->children_index : 0; bfs_children++) {
-		curr_found_tokens = grab_tokens_by_match_helper(start_token->children[bfs_children], is_match, search, curr_found_tokens, found_token_length, index_found_token, recur);
-	}
-
-	return curr_found_tokens;
+	return index_found_token;
 }
 
 yomu_t **grab_tokens_by_match(yomu_t *start_token, int (*match)(yomu_t *, char *), char *search, int *length, int depth) {
 	*length = 8;
 	yomu_t **tokens = malloc(sizeof(yomu_t *) * *length);
 
-	tokens = grab_tokens_by_match_helper(start_token, match, search, tokens, length, 0, depth);
+	int token_number = grab_tokens_by_match_helper(&tokens, start_token, match, search, length, 0, depth);
+	*length = token_number;
 	return tokens;
 }
 
@@ -302,9 +306,11 @@ int destroy_token(yomu_t *curr_token) {
 	free(curr_token->max_attr_tag);
 	free(curr_token->max_children);
 
-	// free children
-	for (int free_child = 0; free_child < curr_token->children_index; free_child++)
-		destroy_token(curr_token->children[free_child]);
+	if (curr_token->deep_copy) {
+		// free children
+		for (int free_child = 0; free_child < curr_token->children_index; free_child++)
+			destroy_token(curr_token->children[free_child]);
+	}
 	free(curr_token->children);
 
 	free(curr_token);
@@ -360,7 +366,7 @@ int token_read_all_data_helper(yomu_t *search_token, char **full_data, int *data
 	for (int read_token_data = 0; read_token_data < search_token->data_index; read_token_data++) {
 		if (search_token->data[read_token_data] == '<' && (read_token_data < search_token->data_index - 1 &&
 			search_token->data[read_token_data + 1] == '>')) {
-			if (recur) {
+			if ((search_token->deep_copy + recur == 0) || recur) {
 				// make sure the next element can be search:
 				while (yomu_f.close_forbidden(yomu_f.forbidden_close_tags, search_token->children[add_from_child]->tag))
 					add_from_child++;
@@ -410,9 +416,9 @@ char *token_read_all_data(yomu_t *search_token, int *data_max, void *block_tag, 
 	return pull_data;
 }
 
-char *read_token(yomu_t *search_token, char read_type) {
+char *read_token(yomu_t *search_token, char deep_read) {
 	int *data_len = malloc(sizeof(int));
-	char *data = token_read_all_data(search_token, data_len, NULL, NULL, read_type == 'd' ? 1 : 0);
+	char *data = token_read_all_data(search_token, data_len, NULL, NULL, deep_read == 'd' ? 1 : 0);
 
 	free(data_len);
 
@@ -624,7 +630,7 @@ tag_reader read_tag(yomu_t *parent_tree, FILE *file, char *str_read, char **curr
 	char *main_tag;
 	search_token = read_main_tag(&main_tag, *curr_line, search_token);
 
-	yomu_t *new_tree = create_token(main_tag, parent_tree);
+	yomu_t *new_tree = create_token(main_tag, parent_tree, 1);
 
 	int read_tag = 1; // choose whether to add to attr_tag_name
 					  // or attr_tag_value: 1 to add to attr_tag_name
@@ -875,7 +881,7 @@ yomu_t *tokenize(char *filename) {
 
 	char *root_tag = malloc(sizeof(char) * 5);
 	strcpy(root_tag, "root");
-	yomu_t *curr_tree = create_token(root_tag, NULL);
+	yomu_t *curr_tree = create_token(root_tag, NULL, 1);
 
 	tokenizeMETA(file, filename, curr_tree);
 
@@ -885,8 +891,20 @@ yomu_t *tokenize(char *filename) {
 	return curr_tree;
 }
 
+int all_match(yomu_t *y, char *any) {
+	return 1;
+}
+
+int anti_all_match(yomu_t *y, char *any) {
+	return 0;
+}
+
 int id_match(yomu_t *y, char *id) {
 	return has_attr_value(y->attribute, y->attr_tag_index, "id", id);
+}
+
+int anti_id_match(yomu_t *y, char *id) {
+	return !has_attr_value(y->attribute, y->attr_tag_index, "id", id);
 }
 
 int class_match(yomu_t *y, char *class) {
@@ -901,7 +919,7 @@ int class_match(yomu_t *y, char *class) {
 
 	// separate all class options
 	int *class_list_len = malloc(sizeof(int)), *yomu_class_len = malloc(sizeof(int));
-	char **class_list = split_string(class, '.', class_list_len, "-c");
+	char **class_list = split_string(class, ' ', class_list_len, "-c");
 	char **yomu_class = split_string(y->attribute[class_index + 1], ' ', yomu_class_len, "-c");
 
 	// make sure each class in class_list occurs in yomu_class
@@ -909,7 +927,7 @@ int class_match(yomu_t *y, char *class) {
 
 		int find_yomu_class;
 		for (find_yomu_class = 0; find_yomu_class < *yomu_class_len; find_yomu_class++) {
-			if (strcmp(class_list[check_class_list_match], yomu_class[find_yomu_class]) == 0)
+			if (strcmp(class_list[check_class_list_match], yomu_class[find_yomu_class] + sizeof(char)) == 0)
 				break;
 		}
 
@@ -923,8 +941,46 @@ int class_match(yomu_t *y, char *class) {
 	return 1;
 }
 
+int ant_class_match(yomu_t *y, char *class) {
+	int class_index;
+	for (class_index = 0; class_index < y->attr_tag_index; class_index += 2) {
+		if (strcmp(y->attribute[class_index], "class") == 0)
+			break;
+	}
+
+	if (class_index == y->attr_tag_index) // no class attribute
+		return 1;
+
+	// separate all class options
+	int *class_list_len = malloc(sizeof(int)), *yomu_class_len = malloc(sizeof(int));
+	char **class_list = split_string(class, ' ', class_list_len, "-c");
+	char **yomu_class = split_string(y->attribute[class_index + 1], ' ', yomu_class_len, "-c");
+
+	// make sure each class in class_list occurs in yomu_class
+	for (int check_class_list_match = 0; check_class_list_match < *class_list_len; check_class_list_match++) {
+
+		int find_yomu_class;
+		for (find_yomu_class = 0; find_yomu_class < *yomu_class_len; find_yomu_class++) {
+			if (strcmp(class_list[check_class_list_match], yomu_class[find_yomu_class] + (sizeof(char) * 2)) == 0)
+				break;
+		}
+
+		// if find_yomu_class == *yomu_class_len, that means there was not an occurrence of
+		// the class_list class, so this should return false
+		if (find_yomu_class == *yomu_class_len)
+			return 1;	
+	}
+
+	// otherwise
+	return 0;
+}
+
 int tag_match(yomu_t *y, char *tag) {
 	return strcmp(y->tag, tag) == 0;
+}
+
+int anti_tag_match(yomu_t *y, char *tag) {
+	return !(strcmp(y->tag, tag + sizeof(char)) == 0);
 }
 
 typedef struct Match {
@@ -966,13 +1022,23 @@ match_t *create_matches(char *match_param, int *match_param_length) {
 
 	// search through sub_match_params to see which function is needed
 	for (int find_match = 0; find_match < *match_param_length; find_match++) {
+		int reverse_match = sub_match_params[find_match][0] == '!';		
+
 		// check first value in the char * to decide which type we are searching for:
-		if (sub_match_params[find_match][0] == '.') // class
-			return_matches[find_match] = match_create(class_match, sub_match_params[find_match]);
-		else if (sub_match_params[find_match][0] == '#') // id
-			return_matches[find_match] = match_create(id_match, sub_match_params[find_match]);
+		if ((reverse_match && sub_match_params[find_match][1] == '*')
+			|| sub_match_params[find_match][0] == '*') // match all
+			return_matches[find_match] = match_create(reverse_match ? anti_all_match : all_match,
+				reverse_match ? sub_match_params[find_match] + sizeof(char) : sub_match_params[find_match]);
+		else if ((reverse_match && sub_match_params[find_match][1] == '.')
+			|| sub_match_params[find_match][0] == '.') // class
+			return_matches[find_match] = match_create(reverse_match ? anti_all_match : class_match,
+				reverse_match ? sub_match_params[find_match] + (sizeof(char) * 2) : sub_match_params[find_match] + sizeof(char));
+		else if ((reverse_match && sub_match_params[find_match][1] == '#')
+			|| sub_match_params[find_match][0] == '#') // id
+			return_matches[find_match] = match_create(reverse_match ? anti_id_match : id_match,
+				reverse_match ? sub_match_params[find_match] + (sizeof(char) * 2) : sub_match_params[find_match] + sizeof(char));
 		else // tag
-			return_matches[find_match] = match_create(tag_match, sub_match_params[find_match]);
+			return_matches[find_match] = match_create(reverse_match ? anti_tag_match : tag_match, sub_match_params[find_match]);
 	}
 
 	return return_matches;
@@ -990,7 +1056,7 @@ yomu_t **compute_matches(yomu_t *y, char *match_param, int *length, int depth) {
 	int *yomu_len = malloc(sizeof(int)), *yomu_prev_len = malloc(sizeof(int)), *yomu_buffer_len = malloc(sizeof(int));
 	yomu_t **yomu_match, **yomu_prev = NULL, **yomu_buffer;
 	yomu_match = grab_tokens_by_match(y, matches[0].match, matches[0].match_tag, yomu_len, depth);
-	for (int find_match = 1; find_match < *match_param_length; find_match++) {
+	for (int find_match = 1; depth && find_match < *match_param_length; find_match++) {
 		if (yomu_prev)
 			free(yomu_prev);
 		*yomu_prev_len = *yomu_len;
@@ -1052,6 +1118,30 @@ yomu_t *compute_match(yomu_t *y, char *match_param, int direction) {
 	return yomu_match;
 }
 
+yomu_t *yomu_merge(int y_len, yomu_t **y) {
+	yomu_t *y_cp = create_token("root", NULL, 0);
+
+	*y_cp->max_children = (y_len + 1);
+	y_cp->children_index = y_len;
+
+	y_cp->children = realloc(y_cp->children, sizeof(yomu_t *) * *y_cp->max_children);
+
+	*y_cp->max_data += (y_len + 1) * 2 + 1;
+
+	y_cp->data = realloc(y_cp->data, sizeof(char) * *y_cp->max_data);
+
+	for (int update_children = 0; update_children < y_len; update_children++) {
+		if (!yomu_f.close_forbidden(yomu_f.forbidden_close_tags, y[update_children]->tag)) {
+			strcat(y_cp->data, "<>");
+			y_cp->data_index += 2;
+		}
+
+		y_cp->children[update_children] = y[update_children];
+	}
+
+	return y_cp;
+}
+
 /*
 	searches for first occurence of a match starting with the children of y
 	direction: defines if the search starts at the end or the beginning:
@@ -1091,6 +1181,8 @@ yomu_func_t yomu_f = (yomu_func_t){
 	.first = grab_first_token_by_match,
 	.last = grab_last_token_by_match,
 
+	.merge = yomu_merge,
+
 	.parent = grab_token_parent,
 
 	.attr = {
@@ -1114,6 +1206,15 @@ int is_range(char c) {
 	return 1;
 }
 
+int delimeter_check(char curr_char, char *delims) {
+	for (int check_delim = 0; delims[check_delim]; check_delim++) {
+		if (delims[check_delim] == curr_char)
+			return 1;
+	}
+
+	return 0;
+}
+
 char **split_string(char *full_string, char delimeter, int *arr_len, char *extra, ...) {
 	va_list param;
 	va_start(param, extra);
@@ -1122,7 +1223,7 @@ char **split_string(char *full_string, char delimeter, int *arr_len, char *extra
 	int (*is_delim)(char, char *) = NULL;
 	char *multi_delims = NULL;
 
-	int (*is_range)(char) = is_range;
+	int (*f_is_range)(char) = is_range;
 
 	int should_lowercase = 1;
 
@@ -1136,7 +1237,7 @@ char **split_string(char *full_string, char delimeter, int *arr_len, char *extra
 			is_delim = va_arg(param, int (*)(char, char *));
 			multi_delims = va_arg(param, char *);
 		} else if (extra[check_extra + 1] == 'r') {
-			is_range = va_arg(param, int (*)(char));
+			f_is_range = va_arg(param, int (*)(char));
 		} else if (extra[check_extra + 1] == 'c')
 			should_lowercase = 0;
 	}
@@ -1183,7 +1284,7 @@ char **split_string(char *full_string, char delimeter, int *arr_len, char *extra
 		}
 
 		// if not in range, skip:
-		if (is_range && !is_range(full_string[read_string]))
+		if (f_is_range && !f_is_range(full_string[read_string]))
 			continue;
 
 		// if a capital letter, lowercase

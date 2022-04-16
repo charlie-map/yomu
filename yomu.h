@@ -42,6 +42,12 @@ typedef struct YomuFunctions {
 	// same as children function but recursively searches every sub path
 	yomu_t **(*find)(yomu_t *, char *, int *);
 
+	// merge takes in any size yomu_t **
+	// and connects them into a single yomu_t *
+	// the int parameter defines the number of yomu_t *'s
+	// within the yomu_t **
+	yomu_t *(*merge)(int, yomu_t **);
+
 	yomu_t *(*first)(yomu_t *, char *);
 	yomu_t *(*last)(yomu_t *, char *);
 
@@ -61,8 +67,8 @@ typedef struct YomuFunctions {
 
 	// takes in a yomu and reads the data within -- the char decides if the read
 	// will also search children or just shallowly read:
-	// 'd' makes yomu search the entire sub tree
-	// 's' means only shallow copying
+	// d -- makes yomu search the entire sub tree
+	// s -- means only shallow copying
 	char *(*read)(yomu_t *, char);
 
 	// recursively destroys all allocated data within a yomu
