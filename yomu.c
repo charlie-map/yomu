@@ -64,6 +64,85 @@ yomu_t *create_token(char *tag, yomu_t *parent) {
 	return new_token;
 }
 
+/*
+	HASHMAP INITIALIZATION
+*/
+typedef struct ReturnHashmap { // used only for type 1
+	void **payload;
+	int payload__length;
+} hashmap__response;
+
+/*
+	vtableKeyStore is used for using unknown type keys in the 
+	hashmap. Because the variable type is unknown, the use
+	of this struct plus the function (some function name)__hashmap() can
+	be used to decipher any type of possible key in the hashmap
+
+	SEE bottom of the page for the function declarations and uses
+*/
+typedef struct VTable {
+	void *key;
+
+	// these define how we utilize the key
+	// DEFAULT behavior is using a char * setup
+	void (*printKey)(void *);
+	int (*compareKey)(void *, void *);
+	void (*destroyKey)(void *);
+} vtableKeyStore;
+
+typedef struct ll_def {
+	struct ll_def *next;
+	
+	vtableKeyStore key;
+	int max__arrLength, arrIndex; // only for hash type 1
+	int isArray;
+	void *ll_meat; // single value pointer
+				   // for hash__type = 0
+				   // or array for
+				   // hash__type = 1
+} ll_main_t;
+
+struct Store {
+	int hashmap__size;
+	// takes a type of hashmap
+	// 0: replace value
+	// 1: append to growing value list
+	int hash__type;
+	ll_main_t **map;
+
+	// used for printing the hashmap values
+	void (*printer)(void *);
+	// destroying hashmap values
+	void (*destroy)(void *);
+};
+
+hashmap *make__hashmap(int hash__type, void (*printer)(void *), void (*destroy)(void *));
+
+void **keys__hashmap(hashmap *hash__m, int *max_key);
+void *get__hashmap(hashmap *hash__m, void *key);
+
+int print__hashmap(hashmap *hash__m);
+
+int delete__hashmap(hashmap *hash__m, void *key);
+
+int deepdestroy__hashmap(hashmap *hash);
+
+int insert__hashmap(hashmap *hash__m, void *key, void *value, ...);
+
+// simple key type functions
+void printCharKey(void *characters);
+int compareCharKey(void *characters, void *otherValue);
+void destroyCharKey(void *characters);
+
+void printIntKey(void *integer);
+int compareIntKey(void *integer, void *otherValue);
+void destroyIntKey(void *integer);
+
+const int MAX_BUCKET_SIZE = 5;
+const int START_SIZE = 1023; // how many initial buckets in array
+
+
+
 int add_token_rolling_data(yomu_t *token, char data) {
 	token->data[token->data_index] = data;
 
@@ -282,6 +361,10 @@ int token_read_all_data_helper(yomu_t *search_token, char **full_data, int *data
 		if (search_token->data[read_token_data] == '<' && (read_token_data < search_token->data_index - 1 &&
 			search_token->data[read_token_data + 1] == '>')) {
 			if (recur) {
+				// make sure the next element can be search:
+				while (yomu_f.close_forbidden(yomu_f.forbidden_close_tags, search_token->children[add_from_child]->tag))
+					add_from_child++;
+
 				data_index = token_read_all_data_helper(search_token->children[add_from_child], full_data, data_max, data_index, block_tag, is_blocked,
 					block_tag && is_blocked(block_tag, search_token->children[add_from_child]->tag), recur);
 
@@ -649,7 +732,7 @@ tag_reader read_tag(yomu_t *parent_tree, FILE *file, char *str_read, char **curr
 	add_token_children(parent_tree, new_tree);
 
 	tag_read.new_search_token = search_token + 1;
-	tag_read.type = (*curr_line)[search_token - 1] == '/';
+	tag_read.type = yomu_f.close_forbidden(yomu_f.forbidden_close_tags, main_tag);
 	tag_read.update_str_read = str_read;
 	return tag_read;
 }
@@ -729,6 +812,52 @@ int file_or_html_name(char *data) {
 
 	return 0;
 }
+
+hashmap *set_forbidden_close_tags() {
+	hashmap *fct = make__hashmap(0, NULL, destroyIntKey);
+
+	int **forbidden_true = malloc(sizeof(int *) * 13);
+	for (int i = 0; i < 13; i++) {
+		forbidden_true[i] = malloc(sizeof(int));
+		*forbidden_true[i] = 1;
+	}
+
+	// based on the forbidden close tags described here:
+	// https://stackoverflow.com/questions/3008593/html-include-or-exclude-optional-closing-tags
+	char *img_f = malloc(sizeof(char) * 4); strcpy(img_f, "img");
+	char *input_f = malloc(sizeof(char) * 6); strcpy(input_f, "input");
+	char *br_f = malloc(sizeof(char) * 3); strcpy(br_f, "br");
+	char *hr_f = malloc(sizeof(char) * 3); strcpy(hr_f, "hr");
+	char *frame_f = malloc(sizeof(char) * 6); strcpy(frame_f, "frame");
+	char *area_f = malloc(sizeof(char) * 5); strcpy(area_f, "area");
+	char *base_f = malloc(sizeof(char) * 5); strcpy(base_f, "base");
+	char *basefont_f = malloc(sizeof(char) * 9); strcpy(basefont_f, "basefont");
+	char *col_f = malloc(sizeof(char) * 4); strcpy(col_f, "col");
+	char *isindex_f = malloc(sizeof(char) * 8); strcpy(isindex_f, "isindex");
+	char *link_f = malloc(sizeof(char) * 5); strcpy(link_f, "link");
+	char *meta_f = malloc(sizeof(char) * 5); strcpy(meta_f, "meta");
+	char *param_f = malloc(sizeof(char) * 6); strcpy(param_f, "param");
+
+	// insert into fct:
+	insert__hashmap(fct, img_f, forbidden_true[0], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, input_f, forbidden_true[1], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, br_f, forbidden_true[2], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, hr_f, forbidden_true[3], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, frame_f, forbidden_true[4], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, area_f, forbidden_true[5], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, base_f, forbidden_true[6], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, basefont_f, forbidden_true[7], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, col_f, forbidden_true[8], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, isindex_f, forbidden_true[9], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, link_f, forbidden_true[10], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, meta_f, forbidden_true[11], "", NULL, compareCharKey, destroyCharKey);
+	insert__hashmap(fct, param_f, forbidden_true[12], "", NULL, compareCharKey, destroyCharKey);
+
+	free(forbidden_true);
+
+	return fct;
+}
+
 /*
 	tokenize takes in either a filename or a char * filled with the <HTML> data
 	search for a "<" or ">" in the filename since if the filename contains one
@@ -937,7 +1066,24 @@ yomu_t *grab_last_token_by_match(yomu_t *y, char *match_param) {
 	return compute_match(y, match_param, 1);
 }
 
+int close_forbidden(hashmap *fct, char *tag_check) {
+	int *t = get__hashmap(fct, tag_check);
+
+	return t ? 1 : 0;
+}
+
+void yomu_initialize() {
+	yomu_f.forbidden_close_tags = set_forbidden_close_tags();
+}
+
+void yomu_finalize() {
+	deepdestroy__hashmap(yomu_f.forbidden_close_tags);
+}
+
 yomu_func_t yomu_f = (yomu_func_t){
+	.forbidden_close_tags = NULL,
+	.close_forbidden = close_forbidden,
+
 	.parse = tokenize,
 
 	.children = compute_match_shallow,
@@ -957,7 +1103,10 @@ yomu_func_t yomu_f = (yomu_func_t){
 	.update = update_token,
 	.read = read_token,
 
-	.destroy = destroy_token
+	.destroy = destroy_token,
+
+	.init = yomu_initialize,
+	.close = yomu_finalize
 };
 
 /* HELPER FUNCTIONS */
@@ -1061,4 +1210,526 @@ char **split_string(char *full_string, char delimeter, int *arr_len, char *extra
 	free(max_curr_sub_word);
 
 	return arr;
+}
+
+/*
+ _               _                           
+| |__   __ _ ___| |__  _ __ ___   __ _ _ __  
+| '_ \ / _` / __| '_ \| '_ ` _ \ / _` | '_ \ 
+| | | | (_| \__ \ | | | | | | | | (_| | |_) |
+|_| |_|\__,_|___/_| |_|_| |_| |_|\__,_| .__/ 
+                                      |_|
+*/
+unsigned long hash(unsigned char *str) {
+	unsigned long hash = 5381;
+	int c;
+
+	while (c = *str++)
+		hash = ((hash << 5) + hash) + c;
+
+	return hash;
+}
+
+
+// define some linked list functions (see bottom of file for function write outs):
+ll_main_t *ll_makeNode(vtableKeyStore key, void *value, int hash__type);
+int ll_insert(ll_main_t *node, vtableKeyStore key, void *payload, int hash__type, void (*destroy)(void *));
+
+ll_main_t *ll_next(ll_main_t *curr);
+
+int ll_print(ll_main_t *curr, void (*printer)(void *));
+
+int ll_isolate(ll_main_t *node);
+int ll_destroy(ll_main_t *node, void (destroyObjectPayload)(void *));
+
+
+hashmap *make__hashmap(int hash__type, void (*printer)(void *), void (*destroy)(void *)) {
+	hashmap *newMap = (hashmap *) malloc(sizeof(hashmap));
+
+	newMap->hash__type = hash__type;
+	newMap->hashmap__size = START_SIZE;
+
+	// define needed input functions
+	newMap->printer = printer;
+	newMap->destroy = destroy;
+
+	newMap->map = (ll_main_t **) malloc(sizeof(ll_main_t *) * newMap->hashmap__size);
+
+	for (int i = 0; i < newMap->hashmap__size; i++) {
+		newMap->map[i] = NULL;
+	}
+
+	return newMap;
+}
+
+// take a previous hashmap and double the size of the array
+// this means we have to take all the inputs and calculate
+// a new position in the new array size
+// within hash__m->map we can access each of the linked list pointer
+// and redirect them since we store the keys
+int re__hashmap(hashmap *hash__m) {
+	// define the sizes / updates to size:
+	int old__mapLength = hash__m->hashmap__size;
+	int new__mapLength = hash__m->hashmap__size * 2;
+
+	// create new map (twice the size of old map (AKA hash__m->map))
+	ll_main_t **new__map = (ll_main_t **) malloc(sizeof(ll_main_t *) * new__mapLength);
+
+	for (int set__newMapNulls = 0; set__newMapNulls < new__mapLength; set__newMapNulls++)
+		new__map[set__newMapNulls] = NULL;
+
+	int new__mapPos = 0;
+
+	for (int old__mapPos = 0; old__mapPos < old__mapLength; old__mapPos++) {
+		// look at each bucket
+		// if there is contents
+		while (hash__m->map[old__mapPos]) { // need to look at each linked node
+			// recalculate hash
+			new__mapPos = hash(hash__m->map[old__mapPos]->key.key) % new__mapLength;
+
+			// store the node in temporary storage
+			ll_main_t *currNode = hash__m->map[old__mapPos];
+
+			// extract currNode from old map (hash__m->map)
+			hash__m->map[old__mapPos] = ll_next(currNode); // advance root
+			ll_isolate(currNode); // isolate old root
+
+			// defines the linked list head in the new map
+			ll_main_t *new__mapBucketPtr = new__map[new__mapPos];
+
+			// if there is one, we have to go to the tail
+			if (new__mapBucketPtr) {
+
+				while (new__mapBucketPtr->next) new__mapBucketPtr = ll_next(new__mapBucketPtr);
+
+				new__mapBucketPtr->next = currNode;
+			} else
+				new__map[new__mapPos] = currNode;
+		}
+	}
+
+	free(hash__m->map);
+	hash__m->map = new__map;
+	hash__m->hashmap__size = new__mapLength;
+
+	return 0;
+}
+
+int METAinsert__hashmap(hashmap *hash__m, vtableKeyStore key, void *value) {
+	int mapPos = hash(key.key) % hash__m->hashmap__size;
+	int bucketLength = 0; // counts size of the bucket at mapPos
+
+	// see if there is already a bucket defined at mapPos
+	if (hash__m->map[mapPos])
+		bucketLength = ll_insert(hash__m->map[mapPos], key, value, hash__m->hash__type, hash__m->destroy);
+	else
+		hash__m->map[mapPos] = ll_makeNode(key, value, hash__m->hash__type);
+
+	// if bucketLength is greater than an arbitrary amount,
+	// need to grow the size of the hashmap (doubling)
+	if (bucketLength >= MAX_BUCKET_SIZE)
+		re__hashmap(hash__m);
+
+	return 0;
+}
+
+int ll_get_keys(ll_main_t *ll_node, void **keys, int *max_key, int key_index) {
+	while(ll_node) {
+		keys[key_index++] = ll_node->key.key;
+
+		if (key_index == *max_key) { // resize
+			*max_key *= 2;
+
+			keys = realloc(keys, sizeof(void *) * *max_key);
+		}
+
+		ll_node = ll_node->next;
+	}
+
+	return key_index;
+}
+
+// creates an array of all keys in the hash map
+void **keys__hashmap(hashmap *hash__m, int *max_key) {
+	int key_index = 0;
+	*max_key = 16;
+	void **keys = malloc(sizeof(void *) * *max_key);
+
+	for (int find_keys = 0; find_keys < hash__m->hashmap__size; find_keys++) {
+		if (hash__m->map[find_keys]) {
+			// search LL:
+			key_index = ll_get_keys(hash__m->map[find_keys], keys, max_key, key_index);
+		}
+	}
+
+	*max_key = key_index;
+
+	return keys;
+}
+
+/*
+	get__hashmap search through a bucket for the inputted key
+	the response varies widely based on hash__type
+
+	-- for all of them: NULL is return if the key is not found
+
+		TYPE 0:
+			Returns the single value that is found
+		TYPE 1:
+			Returns a pointer to a struct (hashmap__response) with an array that can be
+			searched through and a length of said array.
+			This array should be used with caution because accidental
+			free()ing of this array will leave the key to that array
+			pointing to unknown memory. However, the freeing of the
+			returned struct will be left to the user
+*/
+void *get__hashmap(hashmap *hash__m, void *key) {
+	// get hash position
+	int mapPos = hash(key) % hash__m->hashmap__size;
+
+	ll_main_t *ll_search = hash__m->map[mapPos];
+	// search through the bucket to find any keys that match
+	while (ll_search) {
+		if (ll_search->key.compareKey(ll_search->key.key, key)) { // found a match
+
+			// depending on the type and mode, this will just return
+			// the value:
+			if (hash__m->hash__type == 0)
+				return ll_search->ll_meat;
+			else {
+				hashmap__response *returnMeat = malloc(sizeof(hashmap__response));
+
+				if (ll_search->isArray) {
+					returnMeat->payload = ll_search->ll_meat;
+					returnMeat->payload__length = ll_search->arrIndex + 1;
+				} else { // define array
+					ll_search->isArray = 1;
+					void *ll_tempMeatStorage = ll_search->ll_meat;
+
+					ll_search->max__arrLength = 2;
+					ll_search->arrIndex = 0;
+
+					ll_search->ll_meat = malloc(sizeof(void *) * ll_search->max__arrLength * 2);
+					((void **) ll_search->ll_meat)[0] = ll_tempMeatStorage;
+
+					returnMeat->payload = ll_tempMeatStorage;
+					returnMeat->payload__length = ll_search->arrIndex + 1;
+				}
+
+				return returnMeat;
+			}
+		}
+
+		ll_search = ll_next(ll_search);
+	}
+
+	// no key found
+	return NULL;
+}
+
+int print__hashmap(hashmap *hash__m) {
+	for (int i = 0; i < hash__m->hashmap__size; i++) {
+		if (hash__m->map[i]) {
+			printf("Linked list at index %d ", i);
+			ll_print(hash__m->map[i], hash__m->printer);
+			printf("\n");
+		}
+	}
+}
+
+// uses the same process as get__hashmap, but deletes the result
+// instead. Unfortunately, the get__hashmap function cannot be
+// utilized in this context because when the linked list node
+// is being extracted, we need to know what the parent of
+// the node is
+int delete__hashmap(hashmap *hash__m, void *key) {
+	// get hash position
+	int mapPos = hash(key) % hash__m->hashmap__size;
+
+	ll_main_t *ll_parent = hash__m->map[mapPos];
+	ll_main_t *ll_search = ll_next(ll_parent);
+
+	// check parent then move into children nodes in linked list
+	if (ll_parent->key.compareKey(ll_parent->key.key, key)) {
+		// extract parent from the hashmap:
+		hash__m->map[mapPos] = ll_search;
+
+		// ensure entire cut from current ll:
+		ll_parent->next = NULL;
+		ll_destroy(ll_parent, hash__m->destroy);
+
+		return 0;
+	}
+
+	// search through the bucket to find any keys that match
+	while (ll_search) {
+		if (ll_search->key.compareKey(ll_search->key.key, key)) { // found a match
+
+			// we can then delete the key using the same approach as above
+			// extract the key from the linked list
+			ll_parent->next = ll_next(ll_search);
+
+			ll_search->next = NULL;
+			ll_destroy(ll_search, hash__m->destroy);
+
+			return 0;
+		}
+
+		ll_parent = ll_search;
+		ll_search = ll_next(ll_search);
+	}
+
+	return 0;
+}
+
+int deepdestroy__hashmap(hashmap *hash) {
+	// destroy linked list children
+	for (int i = 0; i < hash->hashmap__size; i++) {
+		if (hash->map[i]) {
+			ll_destroy(hash->map[i], hash->destroy);
+		}
+	}
+
+	// destroy map
+	free(hash->map);
+	free(hash);
+
+	return 0;
+}
+
+
+ll_main_t *ll_makeNode(vtableKeyStore key, void *newValue, int hash__type) {
+	ll_main_t *new__node = (ll_main_t *) malloc(sizeof(ll_main_t));
+
+	new__node->isArray = 0;
+	new__node->next = NULL;
+	new__node->key = key;
+	new__node->ll_meat = newValue;
+
+	return new__node;
+}
+
+/*
+	for hash__type = 0
+		takes a linked list node value ptr
+		and replaces the value with
+		updated value
+*/
+void *ll_specialUpdateIgnore(void *ll_oldVal, void *newValue, void (*destroy)(void *)) {
+	// clean up previous info at this pointer
+	destroy(ll_oldVal);
+
+	// update
+	return newValue;
+}
+
+// takes the ll_pointer->ll_meat and doubles
+// size of current array
+int ll_resizeArray(ll_main_t *ll_pointer) {
+	// declare new array
+	void **new__arrayPtr = malloc(sizeof(void *) * ll_pointer->max__arrLength * 2);
+
+	// copy values over
+	for (int copyVal = 0; copyVal < ll_pointer->max__arrLength; copyVal++) {
+		new__arrayPtr[copyVal] = (void *) ((void **) ll_pointer->ll_meat)[copyVal];
+	}
+
+	// free old array pointer
+	free(ll_pointer->ll_meat);
+
+	// update to new meat
+	ll_pointer->ll_meat = new__arrayPtr;
+
+	return 0;
+}
+
+/*
+	for hash__type = 1
+		takes linked list pointer
+		- first makes sure that ll_pointer->ll_meat
+		is an array, if not it creates and array
+		- then appends value to end of array
+*/
+int ll_specialUpdateArray(ll_main_t *ll_pointer, void *newValue) {
+	// The same "leave key be" for update works here as with ignore
+
+	if (!ll_pointer->isArray) { // need to create an array
+		void *ll_tempMeatStorage = ll_pointer->ll_meat;
+
+		// update settings for this pointer
+		ll_pointer->max__arrLength = 8;
+		ll_pointer->arrIndex = 0;
+		ll_pointer->isArray = 1;
+
+		ll_pointer->ll_meat = (void **) malloc(sizeof(void *) * ll_pointer->max__arrLength);
+		((void **) (ll_pointer->ll_meat))[0] = ll_tempMeatStorage;
+
+		for (int memSet = 1; memSet < ll_pointer->arrIndex; memSet++)
+			((void **) (ll_pointer->ll_meat))[memSet] = NULL;
+	}
+
+	// add new value
+	ll_pointer->arrIndex++;
+	((void **) (ll_pointer->ll_meat))[ll_pointer->arrIndex] = newValue;
+
+	if (ll_pointer->arrIndex == ll_pointer->max__arrLength - 1)
+		ll_resizeArray(ll_pointer);
+
+	return 0;
+}
+
+// finds the tail and appends
+int ll_insert(ll_main_t *crawler__node, vtableKeyStore key, void *newValue, int hash__type, void (*destroy)(void *)) {
+
+	int bucket_size = 1, addedPayload = 0;
+
+	// search through the entire bucket
+	// (each node in this linked list)
+	while (crawler__node->next) {
+		// found a duplicate (only matters
+		// for hash__type == 0 or 1)
+		if (crawler__node->key.compareKey(crawler__node->key.key, key.key)) {
+			if (hash__type == 0) {
+				crawler__node->ll_meat = ll_specialUpdateIgnore(crawler__node->ll_meat, newValue, destroy);
+				addedPayload = 1;
+			} else if (hash__type == 1) {
+				ll_specialUpdateArray(crawler__node, newValue);
+				addedPayload = 1;
+			}
+		}
+
+		crawler__node = ll_next(crawler__node);
+		bucket_size++;
+	}
+
+	printf("Testing keys %d\n", crawler__node->key.compareKey(crawler__node->key.key, key.key));
+	if (crawler__node->key.compareKey(crawler__node->key.key, key.key)) {
+		if (hash__type == 0) {
+			crawler__node->ll_meat = ll_specialUpdateIgnore(crawler__node->ll_meat, newValue, destroy);
+			addedPayload = 1;
+		} else if (hash__type == 1) {
+			ll_specialUpdateArray(crawler__node, newValue);
+			addedPayload = 1;
+		}
+	}
+
+	if (addedPayload == 0) {
+		crawler__node->next = ll_makeNode(key, newValue, hash__type);
+	}
+
+	// return same head
+	return bucket_size;
+}
+
+ll_main_t *ll_next(ll_main_t *curr) {
+	return curr->next;
+}
+
+int ll_printNodeArray(ll_main_t *curr, void (*printer)(void *)) {
+	for (int printVal = 0; printVal < curr->arrIndex + 1; printVal++) {
+		printer(((void **) curr->ll_meat)[printVal]);
+	}
+
+	return 0;
+}
+
+int ll_print(ll_main_t *curr, void (*printer)(void *)) {
+	printf("\n\tLL node ");
+	//printVoid()
+	curr->key.printKey(curr->key.key);
+	printf(" with payload(s):\n");
+	if (curr->isArray)
+		ll_printNodeArray(curr, printer);
+	else
+		printer(curr->ll_meat);
+
+	while (curr = ll_next(curr)) {
+		printf("\tLL node ");
+		printf(" with payload(s):\n");
+		if (curr->isArray)
+			ll_printNodeArray(curr, printer);
+		else
+			printer(curr->ll_meat);
+	}
+
+	return 0;
+}
+
+int ll_isolate(ll_main_t *node) {
+	node->next = NULL;
+
+	return 0;
+}
+
+int ll_destroy(ll_main_t *node, void (destroyObjectPayload)(void *)) {
+	ll_main_t *node_nextStore;
+
+	do {
+		if (node->key.destroyKey)
+			node->key.destroyKey(node->key.key);
+
+		if (node->isArray) {
+			for (int destroyVal = 0; destroyVal < node->arrIndex + 1; destroyVal++)
+				destroyObjectPayload(((void **)node->ll_meat)[destroyVal]);
+
+			free(node->ll_meat);
+		} else
+			destroyObjectPayload(node->ll_meat);
+
+		node_nextStore = node->next;
+		free(node);
+	} while (node = node_nextStore);
+
+	return 0;
+}
+
+
+// DEFAULT function declarations
+void printCharKey(void *characters) {
+	printf("%s", (char *) characters);
+}
+int compareCharKey(void *characters, void *otherValue) {
+	return strcmp((char *) characters, (char *) otherValue) == 0;
+}
+void destroyCharKey(void *characters) { free(characters); }
+
+void printIntKey(void *integer) {
+	printf("%d", *((int *) integer));
+}
+int compareIntKey(void *integer, void *otherValue) {
+	return *((int *) integer) == *((int *) otherValue);
+}
+void destroyIntKey(void *integer) { free(integer); }
+
+
+int insert__hashmap(hashmap *hash__m, void *key, void *value, ...) {
+	va_list ap;
+	vtableKeyStore inserter = { .key = key };
+
+	va_start(ap, value);
+	// could be param definer or the printKey function
+	void *firstArgumentCheck = va_arg(ap, char *);
+
+	// check for DEFAULT ("-d") or INT ("-i"):
+	if (strcmp((char *) firstArgumentCheck, "-d") == 0) {// use default
+		inserter.printKey = printCharKey;
+		inserter.compareKey = compareCharKey;
+		inserter.destroyKey = NULL;
+	} else if (strcmp((char *) firstArgumentCheck, "-i") == 0) {
+		inserter.printKey = printIntKey;
+		inserter.compareKey = compareIntKey;
+		inserter.destroyKey = NULL;
+	} else {
+		inserter.printKey = va_arg(ap, void (*)(void *));
+		// do the same for compareKey 
+		inserter.compareKey = va_arg(ap, int (*)(void *, void *));
+
+		inserter.destroyKey = va_arg(ap, void (*)(void *));
+		// if destroy is NULL, we don't want to add since this by DEFAULT
+		// does no exist
+	}	
+
+	METAinsert__hashmap(hash__m, inserter, value);
+
+	return 0;
 }

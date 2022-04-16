@@ -2,6 +2,7 @@
 #define __YOMU_L__
 
 typedef struct Yomu yomu_t;
+typedef struct Store hashmap;
 
 typedef struct Attr {
 	int (*set)(yomu_t *, char *, char *);
@@ -12,6 +13,10 @@ typedef struct YomuFunctions {
 	// takes either a file ("file.html", etc.) or a string("<div>hello</div>")
 	// and creates a yomu representation
 	yomu_t *(*parse)(char *);
+
+	// internal functions
+	hashmap *forbidden_close_tags;
+	int (*close_forbidden)(hashmap *, char *);
 
 	// finder functions:
 	// children takes in the current yomu level and a char * to search for matches
@@ -62,6 +67,9 @@ typedef struct YomuFunctions {
 
 	// recursively destroys all allocated data within a yomu
 	int (*destroy)(yomu_t *);
+
+	void (*init)();
+	void (*close)();
 } yomu_func_t;
 
 extern yomu_func_t yomu_f;
