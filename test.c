@@ -8,13 +8,13 @@ int test_file(char *filename) {
 	yomu_t *yomu = yomu_f.parse("test_data.html");
 
 	int *div_len = malloc(sizeof(int));
-	yomu_t **div = yomu_f.children(yomu, "!a", div_len);
+	yomu_t **div = yomu_f.find(yomu, "div p", div_len);
 
 	yomu_t *div_merge = yomu_f.merge(*div_len, div);
 	free(div_len);
 
 	printf("read -- ");
-	char *yomu_data = yomu_f.read(yomu, "-d-m", "!a !style");
+	char *yomu_data = yomu_f.read(div_merge, "");
 	printf("yomu: %s\n", yomu_data);
 
 	free(yomu_data);
