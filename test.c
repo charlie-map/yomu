@@ -8,16 +8,15 @@ int test_file(char *filename) {
 	yomu_t *yomu = yomu_f.parse("test_data.html");
 
 	int *div_len = malloc(sizeof(int));
-	yomu_t **div = yomu_f.find(yomu, "div p", div_len);
+	yomu_t **div = yomu_f.find(yomu, "img", div_len);
 
-	yomu_t *div_merge = yomu_f.merge(*div_len, div);
+	for (int i = 0; i < *div_len; i++) {
+		printf("%s\n", yomu_f.attr.get(div[i], "src"));
+	}
+
 	free(div_len);
+	free(div);
 
-	printf("read -- ");
-	char *yomu_data = yomu_f.read(div_merge, "");
-	printf("yomu: %s\n", yomu_data);
-
-	free(yomu_data);
 	yomu_f.destroy(yomu);
 
 	return 0;
