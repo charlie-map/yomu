@@ -699,11 +699,14 @@ tag_reader read_tag(yomu_t *parent_tree, FILE *file, char *str_read, char **curr
 	tag_reader tag_read;
 
 	// searching for attributes
-	while ((*curr_line)[search_token] != '>') {
-
+	int prev_searches = 0;
+	while ((*curr_line)[search_token] != '>' ||
+		((*curr_line)[search_token] == '>' && !read_tag)) {
 		if ((*curr_line)[search_token] == '\n') {
+			printf("NEW LINE %s\n", *curr_line);
 			if (!file)
 				str_read += (search_token + 1) * sizeof(char);
+			prev_searches += search_token + 1;
 			read_newline(curr_line, buffer_size, file, str_read);
 
 			search_token = 0;
@@ -731,15 +734,16 @@ tag_reader read_tag(yomu_t *parent_tree, FILE *file, char *str_read, char **curr
 			}
 
 			if ((*curr_line)[search_token] != ' ') {
-				attr_tag_name[attr_tag_name_index++] = (*curr_line)[search_token];
+				attr_tag_name[attr_tag_name_index] = (*curr_line)[search_token];
+				attr_tag_name_index++;
 
 				attr_tag_name = resize_array(attr_tag_name, &max_attr_tag_name, attr_tag_name_index, sizeof(char));
 				attr_tag_name[attr_tag_name_index] = '\0';
 			}
 		} else {
-			if ((!attr_tag_value_enclose_type && (*curr_line)[search_token] == '"') ||
+			if ((*curr_line)[search_token] == '"' || (*curr_line)[search_token] == '\'') {
+				if (start_attr_value && (!attr_tag_value_enclose_type && (*curr_line)[search_token] == '"') ||
 				(attr_tag_value_enclose_type && (*curr_line)[search_token] == '\'')) {
-				if (start_attr_value) {
 					// add to the token
 					char *tag_name = malloc(sizeof(char) * (attr_tag_name_index + 1));
 					strcpy(tag_name, attr_tag_name);
@@ -780,6 +784,7 @@ tag_reader read_tag(yomu_t *parent_tree, FILE *file, char *str_read, char **curr
 	}
 
 	if (attr_tag_name_index > 0) {
+		printf("Add attribute\n");
 		char *tag_name = malloc(sizeof(char) * (attr_tag_name_index + 1));
 		strcpy(tag_name, attr_tag_name);
 
@@ -797,7 +802,7 @@ tag_reader read_tag(yomu_t *parent_tree, FILE *file, char *str_read, char **curr
 
 	add_token_children(parent_tree, new_tree);
 
-	tag_read.new_search_token = search_token + 1;
+	tag_read.new_search_token = prev_searches + search_token + 1;
 	tag_read.type = yomu_f.close_forbidden(yomu_f.forbidden_close_tags, main_tag);
 	tag_read.update_str_read = str_read;
 	return tag_read;
@@ -821,7 +826,9 @@ int tokenizeMETA(FILE *file, char *str_read, yomu_t *curr_tree) {
 		search_token = 0;
 		char *curr_line = *buffer_reader;
 
+		printf("%c", curr_line[search_token]);
 		while (curr_line[search_token] != '\n' && curr_line[search_token] != '\0') {
+			printf("%c", curr_line[search_token]);
 			if (curr_line[search_token] == '<') {
 				if (curr_line[search_token + 1] == '/') { // close tag
 					// return to parent tree instead
